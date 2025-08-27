@@ -1,0 +1,9 @@
+flask==3.1.*
+flask_cors==6.0.*
+waitress==3.0.*
+pillow==11.3.*
+pyside6
+python-escpos==3.1
+bleak==1.1.*
+pyusb
+pyinstaller

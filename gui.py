@@ -13,10 +13,12 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLineEdit,
     QFormLayout,
+    QSizePolicy,
+    QProgressBar,
 )
 
-from PySide6.QtPrintSupport import QPrintDialog
-from PySide6.QtCore import QDateTime
+from PySide6.QtPrintSupport import QPrintDialog, QPrinter
+from PySide6.QtCore import Qt, QDateTime, QSizeF, QMarginsF
 
 from threading import Thread
 
@@ -60,14 +62,33 @@ class MainWindow(QMainWindow):
         mode_row.addWidget(QLabel("Thermal Mode:"))
         self.thermal_mode_combo = QComboBox()
         self.thermal_mode_combo.addItems(["BLE", "USB"])
-        # self.thermal_mode_combo.currentTextChanged.connect(self.on_mode_changed)
+        self.thermal_mode_combo.currentTextChanged.connect(self.on_mode_changed)
         mode_row.addWidget(self.thermal_mode_combo)
         mode_row.addStretch()
         config_layout.addLayout(mode_row)
 
+        # ------------------- USB thermal section -------------------
+        usb_group = QWidget()
+        usb_layout = QVBoxLayout()
+        
+        self.thermal_usb_refresh_btn = QPushButton("Scan USB Printers")
+        self.thermal_usb_refresh_btn.clicked.connect(self.scan_usb_thermal)
+        usb_layout.addWidget(self.thermal_usb_refresh_btn)
+        
+        self.thermal_usb_dropdown = QComboBox()
+        self.thermal_usb_dropdown.currentIndexChanged.connect(self.on_usb_selected)
+        usb_layout.addWidget(self.thermal_usb_dropdown)
+        
+        self.usb_info = QLabel("No USB thermal printer selected")
+        usb_layout.addWidget(self.usb_info)
+        
+        usb_group.setLayout(usb_layout)
+        config_layout.addWidget(usb_group)
+
         # ------------------- BLE thermal section -------------------
         ble_group = QWidget()
         ble_layout = QVBoxLayout()
+        # ble_layout.addWidget(QLabel("<b>BLE Thermal Printer</b>"))
 
         self.thermal_ble_refresh_btn = QPushButton("Scan Printers")
         self.thermal_ble_refresh_btn.clicked.connect(self.scan_ble_thermal)
@@ -123,7 +144,18 @@ class MainWindow(QMainWindow):
         bridge.update_thermal_info.connect(self.update_thermal_info)
         bridge.update_thermal_edit.connect(self.update_thermal_edit)
         bridge.add_log.emit("Application started")
-        # self.apply_mode_visibility()
+        
+        # Store references to groups for visibility control
+        self.ble_group = ble_group
+        self.usb_group = usb_group
+        
+        # Load saved thermal mode
+        saved_mode = thermal.load_thermal_mode()
+        index = self.thermal_mode_combo.findText(saved_mode)
+        if index >= 0:
+            self.thermal_mode_combo.setCurrentIndex(index)
+        
+        self.apply_mode_visibility()
 
     # ------------------- Qt Printer -------------------
     def open_printer_dialog(self):
@@ -143,25 +175,39 @@ class MainWindow(QMainWindow):
     # ------------------- Thermal Printer -------------------
     def scan_ble_thermal(self):
         def worker():
-            self.thermal_ble_dropdown.clear()
-            self.thermal_ble_refresh_btn.setDisabled(True)
-            self.thermal_ble_save_btn.setDisabled(True)
-            self.thermal_mode_combo.setDisabled(True)
-            self.thermal_ble_dropdown.setDisabled(True)
+            try:
+                # Clear and disable UI elements
+                self.thermal_ble_dropdown.clear()
+                self.thermal_ble_refresh_btn.setDisabled(True)
+                self.thermal_ble_save_btn.setDisabled(True)
+                self.thermal_mode_combo.setDisabled(True)
+                self.thermal_ble_dropdown.setDisabled(True)
+                
+                # Update button text to show it's working
+                self.thermal_ble_refresh_btn.setText("🔍 Scanning...")
 
-            thermal.scan_ble_thermal()
+                # Perform the actual scan
+                thermal.scan_ble_thermal()
 
-            if thermal.ble_devices:
-                for d in thermal.ble_devices:
-                    self.thermal_ble_dropdown.addItem(f"{d['name']} — {d['address']}")
+                # Re-populate dropdown if devices found
+                if thermal.ble_devices:
+                    for d in thermal.ble_devices:
+                        self.thermal_ble_dropdown.addItem(f"{d['name']} — {d['address']}")
+                
+            except Exception as e:
+                bridge.add_log.emit(f"BLE scan error in UI: {str(e)}")
+            
+            finally:
+                # Always re-enable UI elements
+                self.thermal_ble_refresh_btn.setDisabled(False)
+                self.thermal_ble_save_btn.setDisabled(False)
+                self.thermal_mode_combo.setDisabled(False)
+                self.thermal_ble_dropdown.setDisabled(False)
+                self.thermal_ble_refresh_btn.setText("Scan Printers")
 
-            self.thermal_ble_refresh_btn.setDisabled(False)
-            self.thermal_ble_save_btn.setDisabled(False)
-            self.thermal_mode_combo.setDisabled(False)
-            self.thermal_ble_dropdown.setDisabled(False)
-
-        # Jalankan scan di thread baru
+        # Run scan in new thread to keep UI responsive
         t = Thread(target=worker)
+        t.daemon = True  # Make it daemon so it doesn't block app exit
         t.start()
 
     def on_ble_selected(self, index: int):
@@ -174,6 +220,61 @@ class MainWindow(QMainWindow):
     def update_thermal_edit(self, service, char):
         self.thermal_service_uuid_edit.setText(service)
         self.thermal_char_uuid_edit.setText(char)
+
+    # ------------------- USB Thermal methods -------------------
+    def scan_usb_thermal(self):
+        def worker():
+            try:
+                # Clear and disable UI elements
+                self.thermal_usb_dropdown.clear()
+                self.thermal_usb_refresh_btn.setDisabled(True)
+                self.thermal_mode_combo.setDisabled(True)
+                self.thermal_usb_dropdown.setDisabled(True)
+                
+                # Update button text to show it's working
+                self.thermal_usb_refresh_btn.setText("🔍 Scanning...")
+
+                # Perform the actual scan
+                thermal.scan_usb_thermal()
+
+                # Re-populate dropdown if devices found
+                if thermal.usb_devices:
+                    for d in thermal.usb_devices:
+                        self.thermal_usb_dropdown.addItem(d['display_name'])
+                
+            except Exception as e:
+                bridge.add_log.emit(f"USB scan error in UI: {str(e)}")
+            
+            finally:
+                # Always re-enable UI elements
+                self.thermal_usb_refresh_btn.setDisabled(False)
+                self.thermal_mode_combo.setDisabled(False)
+                self.thermal_usb_dropdown.setDisabled(False)
+                self.thermal_usb_refresh_btn.setText("Scan USB Printers")
+
+        # Run scan in new thread to keep UI responsive
+        t = Thread(target=worker)
+        t.daemon = True  # Make it daemon so it doesn't block app exit
+        t.start()
+
+    def on_usb_selected(self, index: int):
+        thermal.select_usb_thermal(index)
+
+    # ------------------- Mode switching -------------------
+    def on_mode_changed(self, mode: str):
+        self.apply_mode_visibility()
+        thermal.save_thermal_mode(mode)  # Auto-save mode selection
+        bridge.add_log.emit(f"Switched to {mode} thermal mode")
+
+    def apply_mode_visibility(self):
+        current_mode = self.thermal_mode_combo.currentText()
+        
+        if current_mode == "BLE":
+            self.ble_group.setVisible(True)
+            self.usb_group.setVisible(False)
+        elif current_mode == "USB":
+            self.ble_group.setVisible(False)
+            self.usb_group.setVisible(True)
 
     # ------------------- Other -------------------
     def log_message(self, message):

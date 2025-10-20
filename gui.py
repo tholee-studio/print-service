@@ -15,10 +15,12 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QSizePolicy,
     QProgressBar,
+    QMessageBox,
 )
 
 from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtCore import Qt, QDateTime, QSizeF, QMarginsF
+from PySide6.QtGui import QPageSize
 
 from threading import Thread
 
@@ -158,12 +160,58 @@ class MainWindow(QMainWindow):
         self.apply_mode_visibility()
 
     # ------------------- Qt Printer -------------------
+    def create_clean_printer(self):
+        """Create a clean QPrinter instance without pre-configured printer name to avoid Windows issues"""
+        return QPrinter(QPrinter.PrinterMode.HighResolution)
+    
     def open_printer_dialog(self):
-        local_printer = printer.load_printer_with_config()
-        print_dialog = QPrintDialog(local_printer, self)
-        if print_dialog.exec() == QPrintDialog.Accepted:
-            self.printer_config = printer.save_printer_config(local_printer)
-            self.update_printer_info()
+        try:
+            # Create a fresh printer instance without any pre-configured settings
+            # This avoids the Windows "Cannot be used on non-native printers" error
+            local_printer = self.create_clean_printer()
+            
+            # Try to apply saved configuration (except printer name)
+            saved_config = printer.load_printer_config()
+            if saved_config:
+                try:
+                    # Apply paper size
+                    paper_config = saved_config.get("paper_size", {})
+                    if paper_config.get("type") == "custom":
+                        width = paper_config["width_mm"]
+                        height = paper_config["height_mm"]
+                        custom_size = QSizeF(width, height)
+                        page_size = QPageSize(custom_size, QPageSize.Millimeter)
+                        local_printer.setPageSize(page_size)
+                    else:
+                        try:
+                            size_name = paper_config.get("name", "A4")
+                            page_size = QPageSize(getattr(QPageSize, size_name, QPageSize.A4))
+                            local_printer.setPageSize(page_size)
+                        except Exception:
+                            local_printer.setPageSize(QPageSize(QPageSize.A4))
+                    
+                    # Apply orientation
+                    orientation = (
+                        local_printer.pageLayout().Orientation.Landscape
+                        if saved_config.get("orientation") == "Landscape"
+                        else local_printer.pageLayout().Orientation.Portrait
+                    )
+                    local_printer.setPageOrientation(orientation)
+                except Exception as e:
+                    bridge.add_log.emit(f"Warning: Could not apply saved printer settings: {str(e)}")
+            
+            # Create and show print dialog
+            print_dialog = QPrintDialog(local_printer, self)
+            if print_dialog.exec() == QPrintDialog.Accepted:
+                self.printer_config = printer.save_printer_config(local_printer)
+                self.update_printer_info()
+                bridge.add_log.emit("Printer configuration updated successfully")
+                
+        except Exception as e:
+            bridge.add_log.emit(f"Error opening printer dialog: {str(e)}")
+            # Show a simple message to user
+            QMessageBox.warning(self, "Printer Error", 
+                              f"Could not open printer dialog:\n{str(e)}\n\nPlease check your printer installation.")
 
     def update_printer_info(self):
         paper_name = self.printer_config.get("paper_size", {}).get("name", "-")

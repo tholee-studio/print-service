@@ -20,7 +20,20 @@ class Printer:
         try:
             local_printer = QPrinter(QPrinter.PrinterMode.HighResolution)
             self.load_printer_config()
-            local_printer.setPrinterName(self.printer_config.get("printer_name", ""))
+            
+            # Set printer name only if it exists (to avoid Windows issues)
+            printer_name = self.printer_config.get("printer_name", "")
+            if printer_name:
+                # On Windows, setting a non-existent printer name can cause issues
+                # For now, we'll try to set it and catch any exceptions
+                try:
+                    local_printer.setPrinterName(printer_name)
+                    # Validate the printer was set correctly
+                    if local_printer.printerName() != printer_name:
+                        bridge.add_log.emit(f"Warning: Could not set printer '{printer_name}'. Using default printer.")
+                except Exception as e:
+                    bridge.add_log.emit(f"Warning: Could not set printer '{printer_name}': {str(e)}. Using default printer.")
+            
             paper_config = self.printer_config.get("paper_size", {})
             if paper_config.get("type") == "custom":
                 width = paper_config["width_mm"]
@@ -45,7 +58,7 @@ class Printer:
 
         except Exception as e:
             bridge.add_log.emit(f"Error loading config to printer: {str(e)}")
-            return None
+            return QPrinter(QPrinter.PrinterMode.HighResolution)  # Return basic printer instead of None
 
     def load_printer_config(self):
         try:

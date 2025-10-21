@@ -100,6 +100,24 @@ class Printer:
         temp_path = os.path.join(temp_dir, filename)
         image_file.save(temp_path)
 
+        # Wait and verify file exists and is not empty
+        import time
+        max_retries = 5
+        retry_count = 0
+        while retry_count < max_retries:
+            if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
+                break
+            time.sleep(0.1)  # Wait 100ms
+            retry_count += 1
+            bridge.add_log.emit(f"Waiting for file to be saved (attempt {retry_count})")
+
+        if not os.path.exists(temp_path) or os.path.getsize(temp_path) == 0:
+            error_msg = "Failed to save image file or file is empty"
+            bridge.add_log.emit(f"Print error: {error_msg}")
+            raise Exception(error_msg)
+
+        bridge.add_log.emit(f"File saved successfully: {temp_path} ({os.path.getsize(temp_path)} bytes)")
+
         # Set printer.
         local_printer = self.load_printer_with_config()
         local_printer.setDocName(filename)
